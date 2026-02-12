@@ -1,6 +1,6 @@
 "use client";
 
-import { STATUS_LABELS, STATUS_COLORS } from "@/types";
+import { STATUS_LABELS } from "@/types";
 import ApplicationCard from "./ApplicationCard";
 
 interface Application {
@@ -8,8 +8,8 @@ interface Application {
   company: string;
   position: string;
   status: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface KanbanBoardProps {

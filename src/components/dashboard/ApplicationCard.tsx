@@ -3,15 +3,15 @@ interface Application {
   company: string;
   position: string;
   status: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface ApplicationCardProps {
   application: Application;
 }
 
-function daysAgo(date: Date): string {
+function daysAgo(date: string): string {
   const diff = Math.floor(
     (Date.now() - new Date(date).getTime()) / (1000 * 60 * 60 * 24)
   );

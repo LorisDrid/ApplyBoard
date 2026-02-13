@@ -81,16 +81,17 @@ model Application {
 
 model EmailRecord {
   id            String   @id @default(cuid())
-  applicationId String
+  applicationId String?
   gmailId       String   @unique
   subject       String
   from          String
   snippet       String?  @db.Text
   detectedStatus ApplicationStatus?
+  isJobRelated  Boolean  @default(true)
   receivedAt    DateTime
   processedAt   DateTime @default(now())
 
-  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  application Application? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
 
   @@index([applicationId])
   @@index([gmailId])

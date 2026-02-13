@@ -3,25 +3,42 @@ import { prisma } from "@/lib/db/prisma";
 // Gmail API base URL
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
-// Search query to find job application emails
-const SEARCH_QUERY = [
+// -------------------------------------------------------------------
+// Search strategy: we combine platform senders AND job-related subjects
+// using parentheses so we get emails that are EITHER from a known job
+// platform OR that have a job-related subject line.
+// We also add "newer_than:7d" to only look at the last 7 days.
+// -------------------------------------------------------------------
+const JOB_PLATFORMS = [
   "from:hellowork",
   "from:indeed",
   "from:welcometothejungle",
-  "from:linkedin",
+  "from:linkedin.com",       // more specific than just "linkedin"
   "from:monster",
   "from:apec",
   "from:pole-emploi",
   "from:francetravail",
   "from:glassdoor",
   "from:talent.io",
+  "from:mytalentplug",
+  "from:jobteaser",
+  "from:cadremploi",
+].join(" OR ");
+
+const JOB_SUBJECTS = [
   "subject:candidature",
-  "subject:application",
   "subject:entretien",
   "subject:interview",
-  "subject:offre",
   "subject:recrutement",
+  "subject:(votre candidature)",
+  "subject:(your application)",
+  "subject:(offre d'emploi)",
 ].join(" OR ");
+
+function buildSearchQuery(newerThanDays: number): string {
+  // (platform emails) OR (job-related subjects), limited to recent period
+  return `newer_than:${newerThanDays}d AND ({${JOB_PLATFORMS}} OR {${JOB_SUBJECTS}})`;
+}
 
 interface GmailMessage {
   id: string;
@@ -130,7 +147,7 @@ async function refreshAccessToken(account: {
     const data = await response.json();
 
     if (!response.ok) {
-      console.error("Failed to refresh token:", data);
+      console.error("[Gmail] Failed to refresh token:", data);
       return null;
     }
 
@@ -145,7 +162,7 @@ async function refreshAccessToken(account: {
 
     return data.access_token;
   } catch (error) {
-    console.error("Token refresh error:", error);
+    console.error("[Gmail] Token refresh error:", error);
     return null;
   }
 }
@@ -160,14 +177,22 @@ export interface FetchedEmail {
 }
 
 // Fetch job application emails from Gmail
-export async function fetchEmails(userId: string, maxResults = 50): Promise<FetchedEmail[]> {
+export async function fetchEmails(
+  userId: string,
+  maxResults = 50,
+  newerThanDays = 7
+): Promise<FetchedEmail[]> {
   const accessToken = await getAccessToken(userId);
   if (!accessToken) {
     throw new Error("No valid access token. Please reconnect your Google account.");
   }
 
+  const query = buildSearchQuery(newerThanDays);
+  console.log(`[Gmail] Search query: ${query}`);
+  console.log(`[Gmail] Max results: ${maxResults}`);
+
   // Search for matching emails
-  const searchUrl = `${GMAIL_API}/messages?q=${encodeURIComponent(SEARCH_QUERY)}&maxResults=${maxResults}`;
+  const searchUrl = `${GMAIL_API}/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`;
   const searchRes = await fetch(searchUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -180,6 +205,8 @@ export async function fetchEmails(userId: string, maxResults = 50): Promise<Fetc
   const searchData = await searchRes.json();
   const messages: GmailMessage[] = searchData.messages ?? [];
 
+  console.log(`[Gmail] Found ${messages.length} matching emails`);
+
   if (messages.length === 0) return [];
 
   // Filter out already processed emails
@@ -189,6 +216,8 @@ export async function fetchEmails(userId: string, maxResults = 50): Promise<Fetc
   });
   const existingIds = new Set(existingGmailIds.map((e) => e.gmailId));
   const newMessages = messages.filter((m) => !existingIds.has(m.id));
+
+  console.log(`[Gmail] ${existingIds.size} already processed, ${newMessages.length} new emails to analyze`);
 
   if (newMessages.length === 0) return [];
 
@@ -201,20 +230,30 @@ export async function fetchEmails(userId: string, maxResults = 50): Promise<Fetc
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 
-    if (!detailRes.ok) continue;
+    if (!detailRes.ok) {
+      console.warn(`[Gmail] Failed to fetch message ${msg.id}: ${detailRes.statusText}`);
+      continue;
+    }
 
     const detail: GmailMessageDetail = await detailRes.json();
     const headers = detail.payload.headers;
 
-    emails.push({
+    const email: FetchedEmail = {
       gmailId: detail.id,
       subject: getHeader(headers, "Subject"),
       from: getHeader(headers, "From"),
       body: extractTextBody(detail),
       snippet: detail.snippet,
       receivedAt: new Date(parseInt(detail.internalDate)),
-    });
+    };
+
+    console.log(`[Gmail] Fetched: "${email.subject}" from ${email.from} (${email.receivedAt.toLocaleDateString()})`);
+    emails.push(email);
   }
 
+  // Sort oldest first so we process chronologically
+  emails.sort((a, b) => a.receivedAt.getTime() - b.receivedAt.getTime());
+
+  console.log(`[Gmail] ${emails.length} emails ready to analyze (oldest first)`);
   return emails;
 }

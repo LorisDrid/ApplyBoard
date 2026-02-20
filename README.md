@@ -128,6 +128,17 @@ model EmailRecord {
 }
 ```
 
+## Note on Google verification
+
+This app uses sensitive Gmail scopes (`gmail.readonly`) and has not been submitted for Google verification — a process intended for large-scale public applications that takes several weeks and requires a dedicated privacy policy, terms of service, and domain ownership.
+
+As a result, when signing in with Google, you will see a warning screen saying *"Google hasn't verified this app"*. This is expected. To proceed:
+
+1. Click **"Advanced"**
+2. Click **"Go to ApplyBoard (unsafe)"**
+
+The app only requests read-only Gmail access and does not store, share, or transmit your email content beyond what is displayed in the UI.
+
 ---
 
-*Built as a portfolio project — Loris Drid, Software Engineering student at Polytech Nice Sophia (2026)*
+*Built as a portfolio project — Loris Drid, Software Engineering alumni at Polytech Nice Sophia (2026)*

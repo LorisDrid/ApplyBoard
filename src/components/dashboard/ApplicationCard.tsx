@@ -1,3 +1,7 @@
+interface EmailRecord {
+  receivedAt: string;
+}
+
 interface Application {
   id: string;
   company: string;
@@ -5,19 +9,28 @@ interface Application {
   status: string;
   createdAt: string;
   updatedAt: string;
+  emails?: EmailRecord[];
 }
 
 interface ApplicationCardProps {
   application: Application;
 }
 
-function daysAgo(date: string): string {
-  const diff = Math.floor(
-    (Date.now() - new Date(date).getTime()) / (1000 * 60 * 60 * 24)
-  );
+function formatDate(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diff = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+
   if (diff === 0) return "Aujourd'hui";
   if (diff === 1) return "Hier";
-  return `Il y a ${diff}j`;
+  if (diff < 7) return `Il y a ${diff}j`;
+
+  // Show actual date for older emails
+  return date.toLocaleDateString("fr-FR", {
+    day: "numeric",
+    month: "short",
+    year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+  });
 }
 
 export default function ApplicationCard({ application }: ApplicationCardProps) {
@@ -26,6 +39,10 @@ export default function ApplicationCard({ application }: ApplicationCardProps) {
     application.status === "SENT" &&
     Date.now() - new Date(application.updatedAt).getTime() >
       10 * 24 * 60 * 60 * 1000;
+
+  // Use the most recent email's receivedAt date, fallback to createdAt
+  const lastEmailDate = application.emails?.[0]?.receivedAt;
+  const displayDate = lastEmailDate ?? application.createdAt;
 
   return (
     <div
@@ -54,8 +71,8 @@ export default function ApplicationCard({ application }: ApplicationCardProps) {
       </div>
 
       <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-foreground/[0.04]">
-        <span className="text-[11px] text-muted">
-          {daysAgo(application.createdAt)}
+        <span className="text-[11px] text-muted" title={new Date(displayDate).toLocaleString("fr-FR")}>
+          {formatDate(displayDate)}
         </span>
       </div>
     </div>

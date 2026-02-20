@@ -25,6 +25,60 @@ export interface EmailAnalysis {
 // "is this a job email?" question and just extract data.
 // This avoids wasting AI calls on obvious cases.
 
+// Domains known to be noise — never job-related
+const NOISE_DOMAINS = [
+  "google.com",
+  "gmail.com",
+  "microsoft.com",
+  "outlook.com",
+  "hotmail.com",
+  "amazon.com",
+  "apple.com",
+  "facebook.com",
+  "instagram.com",
+  "twitter.com",
+  "x.com",
+  "youtube.com",
+  "netflix.com",
+  "spotify.com",
+  "airbnb.com",
+  "paypal.com",
+  "stripe.com",
+  "notion.so",
+  "slack.com",
+  "github.com",
+  "gitlab.com",
+  "atlassian.com",
+];
+
+// Subject keywords that definitively indicate noise (non-job emails)
+const NOISE_SUBJECT_KEYWORDS = [
+  "newsletter",
+  "offre du moment",
+  "promotion",
+  "promo",
+  "soldes",
+  "réduction",
+  "remise",
+  "% de réduction",
+  "commande",
+  "livraison",
+  "suivi de colis",
+  "facture",
+  "reçu",
+  "paiement",
+  "abonnement",
+  "compte rendu",
+  "verification",
+  "vérification",
+  "mot de passe",
+  "password",
+  "2fa",
+  "code de sécurité",
+  "bienvenue sur",
+  "welcome to",
+];
+
 const TRUSTED_JOB_DOMAINS = [
   "hellowork.com",
   "reply.hellowork.com",
@@ -45,11 +99,15 @@ const TRUSTED_JOB_DOMAINS = [
   "cadremploi.fr",
 ];
 
-// LinkedIn sub-addresses that are job-related
-const LINKEDIN_JOB_SENDERS = [
-  "jobs-noreply@linkedin.com",
-  "jobs-listings@linkedin.com",
-  "jobalerts-noreply@linkedin.com",
+// LinkedIn senders that confirm a real application was sent
+const LINKEDIN_APPLICATION_SENDERS = [
+  "jobs-noreply@linkedin.com", // "Your application was sent to X"
+];
+
+// LinkedIn senders that are job alerts / suggestions (not real applications)
+const LINKEDIN_JOBALERT_SENDERS = [
+  "jobs-listings@linkedin.com",     // "X is hiring..."
+  "jobalerts-noreply@linkedin.com", // "Ingénieur logiciels: ..."
 ];
 
 // LinkedIn sub-addresses that are NOT job-related (social noise)
@@ -58,6 +116,27 @@ const LINKEDIN_NOISE_SENDERS = [
   "invitations@linkedin.com",
   "messages-noreply@linkedin.com",
   "notifications-noreply@linkedin.com",
+  "newsletters-noreply@linkedin.com",
+];
+
+// Subject patterns that indicate job alerts / suggestions (not real applications)
+// These come from trusted platforms but should be discarded
+const JOB_ALERT_SUBJECT_PATTERNS = [
+  /^\d+ nouvel(le)?s? emploi/i,          // "3 nouveaux emplois..."
+  /et \d+ nouveau(x)? poste/i,           // "...et 2 nouveaux postes"
+  /jobs? similar to/i,                   // "New jobs similar to..."
+  /is hiring a /i,                        // "Company X is hiring a ..."
+  /is hiring an /i,
+  /recherche un\/e /i,                   // "SFR recherche un/e ..."
+  /land a job/i,                          // "Land a job 30% faster"
+  /démarquez-vous en envoyant/i,         // Indeed suggestion
+  /sont désormais synchronisés/i,        // "Vos profils Glassdoor et Indeed sont désormais synchronisés"
+  /est toujours disponible/i,            // "L'emploi chez X est toujours disponible"
+  /postulez sans tarder/i,               // Glassdoor job alert
+  /your profile is getting/i,            // LinkedIn profile views
+  /thanks for being a valued member/i,   // LinkedIn Premium marketing
+  /share their thoughts/i,               // LinkedIn social
+  /you may know/i,                       // LinkedIn people you may know
 ];
 
 /**
@@ -93,30 +172,45 @@ export function preFilterEmail(from: string, subject: string): PreFilterResult {
   const domain = extractDomain(emailAddress);
   const lowerSubject = subject.toLowerCase();
 
-  const rejectionKeywords = ["non retenue", "pas retenue", "suite à votre candidature", "regrettons"];
-  if (rejectionKeywords.some(kw => lowerSubject.includes(kw))) {
-     // Optionnel : tu pourrais retourner un type "auto_rejected" pour sauter l'IA
+  // Check known noise domains first
+  for (const noiseDomain of NOISE_DOMAINS) {
+    if (domain === noiseDomain || domain.endsWith("." + noiseDomain)) {
+      return { decision: "noise", reason: `Known noise domain: ${noiseDomain}` };
+    }
+  }
+
+  // Check noise subject keywords
+  if (NOISE_SUBJECT_KEYWORDS.some(kw => lowerSubject.includes(kw))) {
+    return { decision: "noise", reason: `Noise subject keyword detected: "${subject}"` };
   }
 
   // Check LinkedIn specifically (same domain, different senders)
-  if (domain === "linkedin.com") {
-    if (LINKEDIN_JOB_SENDERS.includes(emailAddress)) {
-      return { decision: "trusted", reason: `LinkedIn job sender: ${emailAddress}` };
-    }
+  if (domain === "linkedin.com" || domain.endsWith(".linkedin.com")) {
     if (LINKEDIN_NOISE_SENDERS.includes(emailAddress)) {
       return { decision: "noise", reason: `LinkedIn social noise: ${emailAddress}` };
     }
-    // Unknown LinkedIn sender → check subject
-    const jobSubjectKeywords = /candidature|application|entretien|interview|hiring|recrut/i;
-    if (jobSubjectKeywords.test(subject)) {
-      return { decision: "trusted", reason: `LinkedIn unknown sender but job subject: "${subject}"` };
+    // Job alert senders → always noise (suggestions, not real applications)
+    if (LINKEDIN_JOBALERT_SENDERS.includes(emailAddress)) {
+      return { decision: "noise", reason: `LinkedIn job alert (not a real application): ${emailAddress}` };
     }
-    return { decision: "unknown", reason: `LinkedIn unknown sender: ${emailAddress}` };
+    if (LINKEDIN_APPLICATION_SENDERS.includes(emailAddress)) {
+      // Even from the application sender, check it's not a job alert subject
+      if (JOB_ALERT_SUBJECT_PATTERNS.some(p => p.test(subject))) {
+        return { decision: "noise", reason: `LinkedIn job alert subject: "${subject}"` };
+      }
+      return { decision: "trusted", reason: `LinkedIn application confirmation: ${emailAddress}` };
+    }
+    // Unknown LinkedIn sender → noise by default (LinkedIn noise >> signal)
+    return { decision: "noise", reason: `LinkedIn unknown sender: ${emailAddress}` };
   }
 
   // Check trusted job platform domains (match end of domain for subdomains)
   for (const trustedDomain of TRUSTED_JOB_DOMAINS) {
     if (domain === trustedDomain || domain.endsWith("." + trustedDomain)) {
+      // Even from trusted platforms, filter out job alerts and marketing
+      if (JOB_ALERT_SUBJECT_PATTERNS.some(p => p.test(subject))) {
+        return { decision: "noise", reason: `Job alert / marketing from trusted platform: "${subject}"` };
+      }
       return { decision: "trusted", reason: `Trusted job platform: ${trustedDomain}` };
     }
   }

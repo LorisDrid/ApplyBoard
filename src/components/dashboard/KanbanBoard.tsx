@@ -3,6 +3,10 @@
 import { STATUS_LABELS } from "@/types";
 import ApplicationCard from "./ApplicationCard";
 
+interface EmailRecord {
+  receivedAt: string;
+}
+
 interface Application {
   id: string;
   company: string;
@@ -10,6 +14,7 @@ interface Application {
   status: string;
   createdAt: string;
   updatedAt: string;
+  emails?: EmailRecord[];
 }
 
 interface KanbanBoardProps {

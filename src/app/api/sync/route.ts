@@ -17,7 +17,7 @@ import type { EmailAnalysis } from "@/lib/ai/analyzer";
 const DELAY_BETWEEN_AI_CALLS_MS = 5_000;
 let isSyncing = false;
 
-export async function POST() {
+export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
   if (isSyncing) {
     return NextResponse.json({ error: "Sync already in progress" }, { status: 409 });
@@ -35,8 +35,19 @@ export async function POST() {
     console.log(`[Sync] Starting sync for user ${userId}`);
     console.log(`${"═".repeat(60)}`);
 
-    // 1. Fetch emails from Gmail (last 7 days, max 20, oldest first)
-    const emails = await fetchEmails(userId, 20, 7);
+    // 1. Parse sync period from request body (default: 3 days)
+    let newerThanDays = 3;
+    try {
+      const body = await request.json().catch(() => ({}));
+      if (body.days && typeof body.days === 'number' && body.days > 0) {
+        newerThanDays = body.days;
+      }
+    } catch { /* ignore */ }
+
+    console.log(`[Sync] Sync period: last ${newerThanDays} day(s)`);
+
+    // 1. Fetch emails from Gmail (oldest first)
+    const emails = await fetchEmails(userId, 50, newerThanDays);
 
     if (emails.length === 0) {
       console.log("[Sync] No new emails found");

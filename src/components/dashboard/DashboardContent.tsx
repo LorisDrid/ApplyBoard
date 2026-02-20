@@ -3,6 +3,10 @@
 import { useEffect, useState, useCallback } from "react";
 import KanbanBoard from "@/components/dashboard/KanbanBoard";
 
+interface EmailRecord {
+  receivedAt: string;
+}
+
 interface Application {
   id: string;
   company: string;
@@ -10,13 +14,23 @@ interface Application {
   status: string;
   createdAt: string;
   updatedAt: string;
+  emails?: EmailRecord[];
 }
+
+const SYNC_PERIODS = [
+  { label: "1 jour", value: 1 },
+  { label: "3 jours", value: 3 },
+  { label: "7 jours", value: 7 },
+  { label: "14 jours", value: 14 },
+  { label: "30 jours", value: 30 },
+];
 
 export default function DashboardContent() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [syncDays, setSyncDays] = useState(3);
 
   const fetchApplications = useCallback(async () => {
     try {
@@ -41,20 +55,23 @@ export default function DashboardContent() {
     setSyncMessage(null);
 
     try {
-      const res = await fetch("/api/sync", { method: "POST" });
+      const res = await fetch("/api/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ days: syncDays }),
+      });
       const data = await res.json();
 
       if (res.ok) {
         setSyncMessage(`${data.processed} nouveau(x) email(s) traité(s)`);
-        await fetchApplications(); // Refresh the board
+        await fetchApplications();
       } else {
         setSyncMessage(`Erreur : ${data.error}`);
       }
-    } catch (error) {
+    } catch {
       setSyncMessage("Erreur de connexion");
     } finally {
       setSyncing(false);
-      // Clear message after 5 seconds
       setTimeout(() => setSyncMessage(null), 5000);
     }
   };
@@ -81,6 +98,24 @@ export default function DashboardContent() {
                 {syncMessage}
               </span>
             )}
+
+            {/* Period selector */}
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-muted whitespace-nowrap">Période</label>
+              <select
+                value={syncDays}
+                onChange={(e) => setSyncDays(Number(e.target.value))}
+                disabled={syncing}
+                className="text-sm px-2.5 py-2 rounded-lg border border-foreground/[0.12] bg-surface text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50 cursor-pointer"
+              >
+                {SYNC_PERIODS.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <button
               onClick={handleSync}
               disabled={syncing}

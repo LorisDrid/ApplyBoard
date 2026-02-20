@@ -4,7 +4,13 @@ import { STATUS_LABELS } from "@/types";
 import ApplicationCard from "./ApplicationCard";
 
 interface EmailRecord {
+  id: string;
+  gmailId: string;
+  subject: string;
+  from: string;
+  snippet: string | null;
   receivedAt: string;
+  detectedStatus: string | null;
 }
 
 interface Application {
@@ -14,11 +20,12 @@ interface Application {
   status: string;
   createdAt: string;
   updatedAt: string;
-  emails?: EmailRecord[];
+  emails: EmailRecord[];
 }
 
 interface KanbanBoardProps {
   applications: Application[];
+  onCardClick: (app: Application) => void;
 }
 
 const COLUMNS = ["SENT", "VIEWED", "INTERVIEW", "OFFER", "REJECTED", "GHOSTED"];
@@ -32,7 +39,7 @@ const COLUMN_ACCENT: Record<string, string> = {
   GHOSTED: "bg-gray-400",
 };
 
-export default function KanbanBoard({ applications }: KanbanBoardProps) {
+export default function KanbanBoard({ applications, onCardClick }: KanbanBoardProps) {
   const grouped = COLUMNS.reduce((acc, status) => {
     acc[status] = applications.filter((app) => app.status === status);
     return acc;
@@ -62,7 +69,11 @@ export default function KanbanBoard({ applications }: KanbanBoardProps) {
               </div>
             ) : (
               grouped[status].map((app) => (
-                <ApplicationCard key={app.id} application={app} />
+                <ApplicationCard
+                  key={app.id}
+                  application={app}
+                  onClick={() => onCardClick(app)}
+                />
               ))
             )}
           </div>

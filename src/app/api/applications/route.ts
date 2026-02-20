@@ -11,7 +11,20 @@ export async function GET() {
 
   const applications = await prisma.application.findMany({
     where: { userId: session.user.id },
-    include: { emails: { orderBy: { receivedAt: "desc" }, take: 1 } },
+    include: {
+      emails: {
+        orderBy: { receivedAt: "desc" },
+        select: {
+          id: true,
+          gmailId: true,
+          subject: true,
+          from: true,
+          snippet: true,
+          receivedAt: true,
+          detectedStatus: true,
+        },
+      },
+    },
     orderBy: { updatedAt: "desc" },
   });
 

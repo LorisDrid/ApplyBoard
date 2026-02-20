@@ -14,7 +14,6 @@ import type { EmailAnalysis } from "@/lib/ai/analyzer";
 // Gemini free tier: 15 RPM, 1500 RPD
 // We space calls to stay well under 15 RPM:
 // 60s / 15 = 4s minimum, we use 5s for safety margin
-const DELAY_BETWEEN_AI_CALLS_MS = 5_000;
 let isSyncing = false;
 
 export async function POST(request: Request) {
@@ -84,8 +83,7 @@ export async function POST(request: Request) {
     }
 
     console.log(`\n[Sync] Pre-filter results: ${trusted.length} trusted, ${unknown.length} unknown, ${noise.length} noise`);
-    console.log(`[Sync] AI calls needed: ${trusted.length + unknown.length} (trusted extraction + unknown classification)`);
-    console.log(`[Sync] Estimated time: ~${((trusted.length + unknown.length) * DELAY_BETWEEN_AI_CALLS_MS / 1000).toFixed(0)}s\n`);
+    console.log(`[Sync] AI calls needed: ${trusted.length + unknown.length} (trusted extraction + unknown classification)\n`);
 
     // 3. Save noise emails to DB (so we don't re-fetch them)
     for (const email of noise) {
@@ -118,12 +116,6 @@ export async function POST(request: Request) {
     for (let i = 0; i < toProcess.length; i++) {
       const email = toProcess[i];
       const isTrusted = i < trusted.length;
-
-      // Proactive rate limiting: wait BEFORE each AI call (except the first)
-      if (aiCallCount > 0) {
-        console.log(`[Sync] ⏳ Waiting ${DELAY_BETWEEN_AI_CALLS_MS / 1000}s before AI call ${aiCallCount + 1}...`);
-        await new Promise((resolve) => setTimeout(resolve, DELAY_BETWEEN_AI_CALLS_MS));
-      }
 
       try {
         let analysis: EmailAnalysis;
@@ -204,13 +196,6 @@ export async function POST(request: Request) {
 
         processed++;
       } catch (emailError) {
-        // Check if it's a daily quota exhaustion
-        if (emailError instanceof Error && emailError.message === "DAILY_QUOTA_EXHAUSTED") {
-          console.error(`\n[Sync] 🛑 DAILY QUOTA EXHAUSTED — stopping sync. ${processed} emails processed so far.`);
-          console.error(`[Sync] Remaining ${toProcess.length - i - 1} emails will be processed on next sync.\n`);
-          dailyQuotaHit = true;
-          break;
-        }
         console.error(`[Sync] ❗ Error processing "${email.subject}":`, emailError);
       }
     }
@@ -221,21 +206,15 @@ export async function POST(request: Request) {
     console.log(`[Sync]    ${processed} applications processed`);
     console.log(`[Sync]    ${skipped} emails skipped (noise/not job-related)`);
     console.log(`[Sync]    ${aiCallCount} AI calls made`);
-    if (dailyQuotaHit) {
-      console.log(`[Sync]    ⚠️ Stopped early: daily quota exhausted`);
-    }
     console.log(`${"─".repeat(60)}\n`);
 
     return NextResponse.json({
-      message: dailyQuotaHit
-        ? `Synced ${processed} applications (stopped: daily quota reached)`
-        : `Synced ${processed} new applications`,
+      message: `Synced ${processed} new applications`,
       processed,
       skipped,
       aiCalls: aiCallCount,
       total: emails.length,
       elapsed: `${elapsed}s`,
-      dailyQuotaHit,
     });
   }
    catch (error) {

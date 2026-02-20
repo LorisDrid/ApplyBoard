@@ -1,5 +1,11 @@
 interface EmailRecord {
+  id: string;
+  gmailId: string;
+  subject: string;
+  from: string;
+  snippet: string | null;
   receivedAt: string;
+  detectedStatus: string | null;
 }
 
 interface Application {
@@ -9,11 +15,12 @@ interface Application {
   status: string;
   createdAt: string;
   updatedAt: string;
-  emails?: EmailRecord[];
+  emails: EmailRecord[];
 }
 
 interface ApplicationCardProps {
   application: Application;
+  onClick: () => void;
 }
 
 function formatDate(dateStr: string): string {
@@ -25,7 +32,6 @@ function formatDate(dateStr: string): string {
   if (diff === 1) return "Hier";
   if (diff < 7) return `Il y a ${diff}j`;
 
-  // Show actual date for older emails
   return date.toLocaleDateString("fr-FR", {
     day: "numeric",
     month: "short",
@@ -33,19 +39,19 @@ function formatDate(dateStr: string): string {
   });
 }
 
-export default function ApplicationCard({ application }: ApplicationCardProps) {
+export default function ApplicationCard({ application, onClick }: ApplicationCardProps) {
   const isGhosted = application.status === "GHOSTED";
   const isSentLong =
     application.status === "SENT" &&
     Date.now() - new Date(application.updatedAt).getTime() >
       10 * 24 * 60 * 60 * 1000;
 
-  // Use the most recent email's receivedAt date, fallback to createdAt
   const lastEmailDate = application.emails?.[0]?.receivedAt;
   const displayDate = lastEmailDate ?? application.createdAt;
 
   return (
     <div
+      onClick={onClick}
       className={`p-3.5 rounded-lg bg-surface border transition-all hover:shadow-md cursor-pointer ${
         isGhosted || isSentLong
           ? "border-red-300/30 bg-red-50/5"
@@ -74,6 +80,9 @@ export default function ApplicationCard({ application }: ApplicationCardProps) {
         <span className="text-[11px] text-muted" title={new Date(displayDate).toLocaleString("fr-FR")}>
           {formatDate(displayDate)}
         </span>
+        <svg className="w-3.5 h-3.5 text-muted/40" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+        </svg>
       </div>
     </div>
   );

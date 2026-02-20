@@ -2,9 +2,16 @@
 
 import { useEffect, useState, useCallback } from "react";
 import KanbanBoard from "@/components/dashboard/KanbanBoard";
+import ApplicationDrawer from "@/components/dashboard/ApplicationDrawer";
 
 interface EmailRecord {
+  id: string;
+  gmailId: string;
+  subject: string;
+  from: string;
+  snippet: string | null;
   receivedAt: string;
+  detectedStatus: string | null;
 }
 
 interface Application {
@@ -14,7 +21,7 @@ interface Application {
   status: string;
   createdAt: string;
   updatedAt: string;
-  emails?: EmailRecord[];
+  emails: EmailRecord[];
 }
 
 const SYNC_PERIODS = [
@@ -31,6 +38,7 @@ export default function DashboardContent() {
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [syncDays, setSyncDays] = useState(3);
+  const [selectedApp, setSelectedApp] = useState<Application | null>(null);
 
   const fetchApplications = useCallback(async () => {
     try {
@@ -159,9 +167,14 @@ export default function DashboardContent() {
             </div>
           </div>
         ) : (
-          <KanbanBoard applications={applications} />
+          <KanbanBoard applications={applications} onCardClick={setSelectedApp} />
         )}
       </div>
+
+      <ApplicationDrawer
+        application={selectedApp}
+        onClose={() => setSelectedApp(null)}
+      />
     </div>
   );
 }

@@ -1,14 +1,6 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import Groq from "groq-sdk";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-
-const model = genAI.getGenerativeModel({
-  model: "gemini-2.5-flash",
-  generationConfig: {
-    responseMimeType: "application/json",
-    temperature: 0.1,
-  },
-});
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
 
 // ─── Types ─────────────────────────────────────────────────
 
@@ -277,121 +269,42 @@ Objet : {subject}
 Contenu : {body}
 ---`;
 
-// ─── Rate Limiter ──────────────────────────────────────────
+// ─── Groq API call ─────────────────────────────────────────
 
-const MAX_RETRIES = 5;
-const BASE_RETRY_DELAY_MS = 15_000; // 15 seconds base (close to Gemini's typical suggested delay)
+const GROQ_MODEL = "llama-3.3-70b-versatile";
+const MAX_RETRIES = 3;
 
-/**
- * Parse the retryDelay from Gemini's error response.
- * Example: "Please retry in 40.469938856s" → 40470
- */
-function parseRetryDelay(errorMessage: string): number | null {
-  const match = errorMessage.match(/retry in (\d+\.?\d*)s/i);
-  if (match) {
-    return Math.ceil(parseFloat(match[1]) * 1000);
-  }
-  return null;
-}
-
-/**
- * Detect if the error is a true DAILY quota exhaustion vs a temporary RPM throttle.
- * 
- * Google returns limit: 0 on ALL quotas (including daily) even for RPM throttles,
- * so we can't rely on that. Instead, we check the suggested retry delay:
- * - Short retry (< 5 min) → RPM throttle, just wait and retry
- * - Long retry (> 1 hour) or no retry info → true daily exhaustion, stop
- */
-function isDailyQuotaExhausted(errorMessage: string): boolean {
-  const retryDelay = parseRetryDelay(errorMessage);
-  
-  // Si le délai de retry est inférieur à 5 minutes, c'est du RPM (limite par minute)
-  // On ne considère que c'est le quota journalier que si le délai est énorme ou absent
-  if (retryDelay !== null && retryDelay < 300 * 1000) {
-    return false;
-  }
-  
-  // On vérifie si l'erreur 429 est explicitement liée au quota journalier
-  // et non juste présente dans les détails du message
-  return errorMessage.includes("GenerateRequestsPerDay") && !errorMessage.includes("PerMinute");
-}
-
-async function callGeminiWithRetry(prompt: string): Promise<string> {
+async function callGroq(prompt: string): Promise<string> {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const result = await model.generateContent(prompt);
-      return result.response.text();
+      const completion = await groq.chat.completions.create({
+        model: GROQ_MODEL,
+        temperature: 0.1,
+        max_tokens: 256,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      });
+      return completion.choices[0].message.content ?? "{}";
     } catch (error: unknown) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-
       const isRateLimit =
         errorMsg.includes("429") ||
-        errorMsg.includes("RESOURCE_EXHAUSTED") ||
-        errorMsg.includes("rate") ||
-        errorMsg.includes("quota");
+        errorMsg.includes("rate_limit") ||
+        errorMsg.includes("Rate limit");
 
-      if (!isRateLimit) {
-        throw error;
-      }
+      if (!isRateLimit || attempt === MAX_RETRIES) throw error;
 
-      // Log detailed quota info
-      logQuotaDetails(errorMsg);
-
-      // If daily quota is exhausted, stop immediately — retries are pointless
-      if (isDailyQuotaExhausted(errorMsg)) {
-        console.error("[Gemini] 🛑 Daily quota exhausted! No point retrying. Wait until tomorrow or create a new Google Cloud project.");
-        throw new Error("DAILY_QUOTA_EXHAUSTED");
-      }
-
-      if (attempt < MAX_RETRIES) {
-        // Use the delay suggested by the API, or fallback to exponential backoff
-        const suggestedDelay = parseRetryDelay(errorMsg);
-        const backoff = suggestedDelay ?? BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
-        console.warn(
-          `[Gemini] ⚠️ Rate limit hit (attempt ${attempt + 1}/${MAX_RETRIES + 1}), waiting ${(backoff / 1000).toFixed(1)}s${suggestedDelay ? " (API suggested)" : ""}...`
-        );
-        await new Promise((resolve) => setTimeout(resolve, backoff));
-        continue;
-      }
-      throw error;
+      const backoff = 10_000 * Math.pow(2, attempt);
+      console.warn(`[Groq] ⚠️ Rate limit (attempt ${attempt + 1}/${MAX_RETRIES + 1}), waiting ${backoff / 1000}s...`);
+      await new Promise((resolve) => setTimeout(resolve, backoff));
     }
   }
-  throw new Error("Max retries exceeded for Gemini API");
-}
-
-/**
- * Parse and log detailed quota information from a Gemini error.
- */
-function logQuotaDetails(errorMsg: string): void {
-  console.error("[Gemini] 📊 Quota details:");
-
-  // Extract all quota violations
-  const violations = [];
-  const violationRegex = /quotaMetric.*?quotaDimensions.*?}/gs;
-  const matches = errorMsg.match(violationRegex);
-  if (matches) {
-    for (const m of matches) {
-      const metric = m.match(/quotaMetric":"([^"]+)"/)?.[1] ?? "unknown";
-      const quotaId = m.match(/quotaId":"([^"]+)"/)?.[1] ?? "unknown";
-      violations.push({ metric: metric.split("/").pop(), quotaId });
-    }
-  }
-  if (violations.length > 0) {
-    for (const v of violations) {
-      const isDaily = v.quotaId.includes("PerDay");
-      const isMinute = v.quotaId.includes("PerMinute");
-      const isTokens = v.metric?.includes("token");
-      const type = isDaily ? "DAILY" : isMinute ? "PER-MINUTE" : "OTHER";
-      const what = isTokens ? "tokens" : "requests";
-      console.error(`[Gemini]   → ${type} ${what} limit (${v.quotaId})`);
-    }
-  }
-
-  // Extract retry delay
-  const retryMatch = errorMsg.match(/retry in (\d+\.?\d*)s/i);
-  if (retryMatch) {
-    console.error(`[Gemini]   → Suggested retry: ${retryMatch[1]}s`);
-  }
+  throw new Error("Max retries exceeded for Groq API");
 }
 
 // ─── Public API ────────────────────────────────────────────
@@ -412,9 +325,9 @@ export async function analyzeJobEmail(
       .replace("{subject}", subject)
       .replace("{body}", truncatedBody);
 
-    console.log(`[Gemini] 📨 Extracting (trusted): "${subject}"`);
+    console.log(`[Groq] 📨 Extracting (trusted): "${subject}"`);
 
-    const text = await callGeminiWithRetry(prompt);
+    const text = await callGroq(prompt);
     const raw = JSON.parse(text);
 
     const validStatuses = ["SENT", "VIEWED", "INTERVIEW", "OFFER", "REJECTED"];
@@ -429,14 +342,11 @@ export async function analyzeJobEmail(
     };
 
     console.log(
-      `[Gemini] ✅ ${analysis.company} — ${analysis.position} [${analysis.status}] (${analysis.confidence})`
+      `[Groq] ✅ ${analysis.company} — ${analysis.position} [${analysis.status}] (${analysis.confidence})`
     );
     return analysis;
   } catch (error) {
-    if (error instanceof Error && error.message === "DAILY_QUOTA_EXHAUSTED") {
-      throw error; // Propagate to stop the sync loop
-    }
-    console.error(`[Gemini] ❗ Extraction error for "${subject}":`, error);
+    console.error(`[Groq] ❗ Extraction error for "${subject}":`, error);
     return {
       company: extractCompanyFromEmail(from),
       position: "Non spécifié",
@@ -463,13 +373,13 @@ export async function classifyAndAnalyzeEmail(
       .replace("{subject}", subject)
       .replace("{body}", truncatedBody);
 
-    console.log(`[Gemini] 🔍 Classifying (unknown): "${subject}"`);
+    console.log(`[Groq] 🔍 Classifying (unknown): "${subject}"`);
 
-    const text = await callGeminiWithRetry(prompt);
+    const text = await callGroq(prompt);
     const raw = JSON.parse(text);
 
     if (!raw.isJobRelated) {
-      console.log(`[Gemini] ❌ Not job-related: "${subject}"`);
+      console.log(`[Groq] ❌ Not job-related: "${subject}"`);
       return {
         company: "N/A",
         position: "N/A",
@@ -491,14 +401,11 @@ export async function classifyAndAnalyzeEmail(
     };
 
     console.log(
-      `[Gemini] ✅ ${analysis.company} — ${analysis.position} [${analysis.status}] (${analysis.confidence})`
+      `[Groq] ✅ ${analysis.company} — ${analysis.position} [${analysis.status}] (${analysis.confidence})`
     );
     return analysis;
   } catch (error) {
-    if (error instanceof Error && error.message === "DAILY_QUOTA_EXHAUSTED") {
-      throw error;
-    }
-    console.error(`[Gemini] ❗ Classification error for "${subject}":`, error);
+    console.error(`[Groq] ❗ Classification error for "${subject}":`, error);
     return {
       company: extractCompanyFromEmail(from),
       position: "Non spécifié",
